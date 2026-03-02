@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>JKN Claim File Splitter – SEP Based</title>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+body{
+    margin:0;
+    font-family:'Segoe UI',sans-serif;
+    background:#0f172a;
+    color:white;
+    display:flex;
+    justify-content:center;
+}
+.container{
+    width:950px;
+    margin:30px;
+    background:#1e293b;
+    padding:30px;
+    border-radius:18px;
+    box-shadow:0 20px 50px rgba(0,0,0,0.5);
+}
+.header{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+}
+.badge{
+    background:#2563eb;
+    padding:6px 12px;
+    border-radius:20px;
+    font-size:12px;
+}
+button{
+    background:#3b82f6;
+    border:none;
+    padding:10px 18px;
+    border-radius:8px;
+    color:white;
+    cursor:pointer;
+    margin-top:10px;
+}
+button:hover{background:#1d4ed8;}
+.progress{
+    background:#334155;
+    height:20px;
+    border-radius:12px;
+    margin-top:15px;
+    overflow:hidden;
+}
+.bar{
+    height:100%;
+    width:0%;
+    background:#22c55e;
+    transition:0.3s;
+}
+.stats{
+    display:flex;
+    justify-content:space-between;
+    margin-top:10px;
+    font-size:14px;
+}
+.sep-list{
+    background:#0f172a;
+    margin-top:15px;
+    padding:10px;
+    border-radius:10px;
+    max-height:220px;
+    overflow-y:auto;
+    font-size:13px;
+}
+.footer{
+    margin-top:15px;
+    font-size:12px;
+    opacity:0.6;
+    text-align:center;
+}
+.timer-box{
+    margin-top:8px;
+    font-size:14px;
+    color:#38bdf8;
+}
+.upload-wrapper{ margin-top:15px; }
+.custom-upload{
+    display:flex;
+    align-items:center;
+    gap:15px;
+    background:linear-gradient(135deg,#1e40af,#2563eb);
+    padding:18px;
+    border-radius:14px;
+    cursor:pointer;
+    transition:0.3s;
+}
+.custom-upload:hover{
+    transform:translateY(-2px);
+    box-shadow:0 10px 25px rgba(37,99,235,0.4);
+}
+#pdfInput{ display:none; }
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<div class="header">
+    <h2>JKN Claim File Splitter – SEP Based</h2>
+    <div class="badge">Enterprise Internal Tool</div>
+</div>
+
+<p>Split & Rename Klaim Berdasarkan Nomor SEP (Internal RS)</p>
+
+<div class="upload-wrapper">
+    <label for="pdfInput" class="custom-upload">
+        <div>📁</div>
+        <div>
+            <div><strong>Pilih File PDF Klaim</strong></div>
+            <div id="fileName">Belum ada file dipilih</div>
+        </div>
+    </label>
+    <input type="file" id="pdfInput" accept="application/pdf" onchange="showFileName()">
+</div>
+
+<button onclick="processPDF()">PROSES FILE</button>
+<button onclick="exportExcel()">EXPORT KE EXCEL</button>
+
+<div class="progress">
+    <div class="bar" id="progressBar"></div>
+</div>
+
+<div class="stats">
+    <div>Total: <span id="totalPages">0</span></div>
+    <div>Berhasil: <span id="successCount">0</span></div>
+    <div>Duplikat: <span id="duplicateCount">0</span></div>
+    <div>Gagal: <span id="failCount">0</span></div>
+</div>
+
+<div class="timer-box">
+    ⏱ Waktu Eksekusi: <span id="executionTime">0.00</span> detik
+</div>
+
+<div class="footer">
+    Internal Confidential • Timestamp: <span id="timestamp"></span>
+</div>
+
+</div>
+
+<script>
+
+let sepData=[];
+let startTime;
+let timerInterval;
+
+function showFileName(){
+    const input=document.getElementById("pdfInput");
+    document.getElementById("fileName").textContent=
+        input.files.length?input.files[0].name:"Belum ada file dipilih";
+}
+
+async function processPDF(){
+
+    sepData=[];
+    const sepSet=new Set();
+    let success=0, duplicate=0;
+
+    const input=document.getElementById("pdfInput");
+    if(!input.files.length){
+        alert("Pilih file PDF terlebih dahulu.");
+        return;
+    }
+
+    const buffer=await input.files[0].arrayBuffer();
+    const pdfDoc=await PDFLib.PDFDocument.load(buffer);
+    const pageCount=pdfDoc.getPageCount();
+    document.getElementById("totalPages").innerText=pageCount;
+
+    const pdf=await pdfjsLib.getDocument({data:buffer}).promise;
+    const zip=new JSZip();
+
+    startTime=performance.now();
+    timerInterval=setInterval(()=>{
+        document.getElementById("executionTime").innerText=
+        ((performance.now()-startTime)/1000).toFixed(2);
+    },100);
+
+    for(let i=0;i<pageCount;i++){
+
+        const page=await pdf.getPage(i+1);
+        const textContent=await page.getTextContent();
+        const rawText=textContent.items.map(item=>item.str).join(" ");
+        const text=rawText.replace(/\s+/g," ");
+
+        const pesertaMatch=text.match(/Nomor\s*Peserta\s*:\s*([0-9\s]{8,20})/i);
+        let peserta="-";
+        if(pesertaMatch){
+            peserta=pesertaMatch[1].replace(/\s/g,"").padStart(13,"0");
+        }
+
+        const sepMatch=text.match(/Nomor\s*SEP\s*:\s*([0-9A-Z]+)/i);
+        const rmMatch=text.match(/Nomor\s*Rekam\s*Medis\s*:\s*([0-9]+)/i);
+        const tglMasukMatch=text.match(/Tanggal\s*Masuk\s*:\s*([0-9\/]+)/i);
+        const tglKeluarMatch=text.match(/Tanggal\s*Keluar\s*:\s*([0-9\/]+)/i);
+        const umurTahunMatch=text.match(/Umur\s*Tahun\s*:\s*([0-9]+)/i);
+        const umurHariMatch=text.match(/Umur\s*Hari\s*:\s*([0-9]+)/i);
+        const jenisRawatMatch=text.match(/Jenis\s*Perawatan\s*:\s*(\d+\s*-\s*[A-Za-z ]+)/i);
+
+        let sep=sepMatch?sepMatch[1]:"NO_SEP_PAGE_"+(i+1);
+
+        if(sepSet.has(sep)){ duplicate++; }
+        else{ sepSet.add(sep); success++; }
+
+        sepData.push({
+            peserta,
+            sep,
+            rm:rmMatch?rmMatch[1]:"-",
+            tglMasuk:tglMasukMatch?tglMasukMatch[1]:"-",
+            tglKeluar:tglKeluarMatch?tglKeluarMatch[1]:"-",
+            umurTahun:umurTahunMatch?umurTahunMatch[1]:"-",
+            umurHari:umurHariMatch?umurHariMatch[1]:"-",
+            jenisRawat:jenisRawatMatch?jenisRawatMatch[1]:"-"
+        });
+
+        const newPdf=await PDFLib.PDFDocument.create();
+        const [copiedPage]=await newPdf.copyPages(pdfDoc,[i]);
+        newPdf.addPage(copiedPage);
+        zip.file(sep+".pdf",await newPdf.save());
+
+        document.getElementById("progressBar").style.width=((i+1)/pageCount*100)+"%";
+        document.getElementById("successCount").innerText=success;
+        document.getElementById("duplicateCount").innerText=duplicate;
+    }
+
+    const content=await zip.generateAsync({type:"blob"});
+    const link=document.createElement("a");
+    link.href=URL.createObjectURL(content);
+    link.download="HASIL_SPLIT_KLAIM_ENTERPRISE.zip";
+    link.click();
+
+    clearInterval(timerInterval);
+    document.getElementById("timestamp").innerText=new Date().toLocaleString();
+}
+
+/* ========================= */
+/* ===== FIX EXPORT ======== */
+/* ========================= */
+
+function exportExcel(){
+
+    if(!sepData.length){
+        alert("Belum ada data.");
+        return;
+    }
+
+    let table=`<table border="1">
+    <tr>
+    <th>Nomor Peserta</th>
+    <th>Nomor SEP</th>
+    <th>Nomor Rekam Medis</th>
+    <th>Tanggal Masuk</th>
+    <th>Tanggal Keluar</th>
+    <th>Umur Tahun</th>
+    <th>Umur Hari</th>
+    <th>Jenis Perawatan</th>
+    </tr>`;
+
+    sepData.forEach(d=>{
+
+        let cleanedJenis="-";
+
+        if(d.jenisRawat && d.jenisRawat!=="-"){
+            const match=d.jenisRawat.match(/^(\d+\s*-\s*(Rawat Inap|Rawat Jalan))/i);
+            cleanedJenis=match?match[1].trim():d.jenisRawat.trim();
+        }
+
+        table+=`
+        <tr>
+        <td style="mso-number-format:'\\@';">${d.peserta}</td>
+        <td style="mso-number-format:'\\@';">${d.sep}</td>
+        <td style="mso-number-format:'\\@';">${d.rm}</td>
+        <td>${d.tglMasuk}</td>
+        <td>${d.tglKeluar}</td>
+        <td>${d.umurTahun}</td>
+        <td>${d.umurHari}</td>
+        <td>${cleanedJenis}</td>
+        </tr>`;
+    });
+
+    table+="</table>";
+
+    const blob=new Blob([table],{type:"application/vnd.ms-excel"});
+    const link=document.createElement("a");
+    link.href=URL.createObjectURL(blob);
+    link.download="DAFTAR_KLAIM_JKN_LENGKAP.xls";
+    link.click();
+}
+
+</script>
+</body>
+</html>
